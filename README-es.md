@@ -32,6 +32,15 @@ uv run jira_sync.py --full     # ignora el estado local y vuelve a descargar tod
 uv run jira_sync.py --env ruta/al/.env
 ```
 
+El script tiene un _shebang_ de `uv` (`#!/usr/bin/env -S uv run --script`) y está guardado como ejecutable, así que en Linux, macOS, WSL y Git Bash puedes ejecutarlo directamente, sin escribir `uv run`:
+
+```bash
+./jira_sync.py                 # equivale a: uv run jira_sync.py
+./jira_sync.py --full
+```
+
+`uv` sigue siendo necesario, porque el _shebang_ lo invoca. PowerShell y `cmd` de Windows ignoran los _shebang_, así que allí usa `uv run jira_sync.py`. Si se pierde el bit de ejecución (por ejemplo al descargar un ZIP), ejecuta `chmod +x jira_sync.py`. Por defecto `.env` se lee del directorio actual; si lo ejecutas desde otro sitio, por ejemplo desde `cron`, pasa `--env /ruta/absoluta/.env`.
+
 Al terminar muestra un resumen: issues nuevos, actualizados, sin cambios, borrados en Jira y adjuntos descargados.
 
 ## Arquitectura
