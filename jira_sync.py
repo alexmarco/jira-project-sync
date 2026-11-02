@@ -11,7 +11,7 @@ Configuration is read from .env (environment variables take precedence):
     JIRA_URL        https://your-domain.atlassian.net
     JIRA_EMAIL      account email
     JIRA_API_TOKEN  API token
-    JIRA_PROJECT    project key (default: PROJ)
+    JIRA_PROJECT    project key (e.g. PROJ)
     OUTPUT_DIR      destination folder (default: ./backup)
     CONCURRENCY     parallel requests (default: 5)
 """
@@ -61,7 +61,7 @@ def load_config(env_path: Path) -> dict[str, str]:
         "url": get("JIRA_URL").rstrip("/"),
         "email": get("JIRA_EMAIL"),
         "token": get("JIRA_API_TOKEN"),
-        "project": get("JIRA_PROJECT", "PROJ"),
+        "project": get("JIRA_PROJECT"),
         "output_dir": get("OUTPUT_DIR", "./backup"),
         "concurrency": get("CONCURRENCY", "5"),
     }

@@ -13,14 +13,14 @@ El resultado es un conjunto de ficheros JSON en disco, sin base de datos. Este d
 
 Copia `.env.example` a `.env` y rellena los valores. Las variables de entorno tienen prioridad sobre `.env`.
 
-| Variable         | Obligatoria | Por defecto | Descripción                       |
-| :--------------- | :---------: | :---------- | :-------------------------------- |
-| `JIRA_URL`       |     Sí      | —           | URL de la instancia de Jira Cloud |
-| `JIRA_EMAIL`     |     Sí      | —           | Email de la cuenta                |
-| `JIRA_API_TOKEN` |     Sí      | —           | API token                         |
-| `JIRA_PROJECT`   |     No      | `PROJ`       | Clave del proyecto                |
-| `OUTPUT_DIR`     |     No      | `./backup`  | Carpeta de destino                |
-| `CONCURRENCY`    |     No      | `5`         | Número de peticiones en paralelo  |
+| Variable         | Obligatoria | Por defecto | Descripción                             |
+| :--------------- | :---------: | :---------- | :-------------------------------------- |
+| `JIRA_URL`       |     Sí      | —           | URL de la instancia de Jira Cloud       |
+| `JIRA_EMAIL`     |     Sí      | —           | Email de la cuenta                      |
+| `JIRA_API_TOKEN` |     Sí      | —           | API token                               |
+| `JIRA_PROJECT`   |     Sí      | —           | Clave del proyecto (por ejemplo `PROJ`) |
+| `OUTPUT_DIR`     |     No      | `./backup`  | Carpeta de destino                      |
+| `CONCURRENCY`    |     No      | `5`         | Número de peticiones en paralelo        |
 
 ## Uso
 
@@ -121,7 +121,7 @@ backup/PROJ/
 
 | Ruta                                  | Contenido                                                                                            |
 | :------------------------------------ | :--------------------------------------------------------------------------------------------------- |
-| `issues/PROJ-n.json`                   | Issue con todos sus campos, changelog completo, comentarios, worklogs y enlaces remotos              |
+| `issues/PROJ-n.json`                  | Issue con todos sus campos, changelog completo, comentarios, worklogs y enlaces remotos              |
 | `links.json`                          | Enlaces entre issues con su tipo (`Blocks`, `Relates`...) y jerarquía padre/hijo (epics y subtareas) |
 | `model/project.json`                  | Definición del proyecto, con sus tipos de issue                                                      |
 | `model/statuses.json`                 | Estados por tipo de issue                                                                            |
@@ -151,7 +151,7 @@ erDiagram
     LINK }o--|| LINK_TYPES : "type.id"
     ISSUE_FILE }o--|| STATUSES : "fields.status.id"
     ISSUE_FILE }o--|| PROJECT : "fields.issuetype.id"
-    ISSUE_FILE }o--o{ SPRINTS : "fields.customfield_10010[].id"
+    ISSUE_FILE }o--o{ SPRINTS : "fields.(campo Sprint)[].id"
     ISSUE_FILE }o--|| FIELDS : "issue.names y claves customfield_*"
     BOARD_CONFIG }o--o{ STATUSES : "columnConfig.columns[].statuses[].id"
     SPRINTS }o--|| BOARD_CONFIG : "originBoardId"
@@ -175,18 +175,18 @@ Las entidades del diagrama son ficheros o partes de ellos:
 
 ### Identificadores y claves de unión
 
-| Concepto              | Clave de unión                   | Notas                                                                                                                   |
-| :-------------------- | :------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
-| Identidad de un issue | `id` (cadena numérica)           | Estable. La clave (`PROJ-12`) puede cambiar si el issue se mueve de proyecto                                             |
-| Nombre de fichero     | `key` del issue                  | `issues/<key>.json`. Si la clave cambia, el script renombra el fichero                                                  |
-| `state.json`          | `id` del issue                   | Cada entrada apunta a la `key` actual                                                                                   |
-| Enlaces y jerarquía   | `key`                            | `links.json` referencia issues por clave, no por id                                                                     |
-| Tipo de enlace        | `type.id`                        | Se resuelve en `model/link_types.json`                                                                                  |
-| Estado de un issue    | `fields.status.id`               | Se resuelve en `model/statuses.json`, agrupado por tipo de issue                                                        |
-| Tipo de issue         | `fields.issuetype.id`            | Se resuelve en `model/project.json` → `issueTypes`. `hierarchyLevel` ordena los niveles: Epic 1, Historia 0, Subtask -1 |
-| _Sprint_ de un issue  | `fields.customfield_10010[].id`  | Se resuelve en `model/board_<id>_sprints.json`                                                                          |
-| Nombre de un campo    | `customfield_*` o nombre clásico | `issue.names` (por issue) y `model/fields.json` (global) traducen el identificador al nombre visible                    |
-| Adjunto               | `fields.attachment[].id`         | El fichero está en `attachments/<key>/<id>_<nombre>`                                                                    |
+| Concepto              | Clave de unión                   | Notas                                                                                                                                                                    |
+| :-------------------- | :------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identidad de un issue | `id` (cadena numérica)           | Estable. La clave (`PROJ-12`) puede cambiar si el issue se mueve de proyecto                                                                                             |
+| Nombre de fichero     | `key` del issue                  | `issues/<key>.json`. Si la clave cambia, el script renombra el fichero                                                                                                   |
+| `state.json`          | `id` del issue                   | Cada entrada apunta a la `key` actual                                                                                                                                    |
+| Enlaces y jerarquía   | `key`                            | `links.json` referencia issues por clave, no por id                                                                                                                      |
+| Tipo de enlace        | `type.id`                        | Se resuelve en `model/link_types.json`                                                                                                                                   |
+| Estado de un issue    | `fields.status.id`               | Se resuelve en `model/statuses.json`, agrupado por tipo de issue                                                                                                         |
+| Tipo de issue         | `fields.issuetype.id`            | Se resuelve en `model/project.json` → `issueTypes`. `hierarchyLevel` ordena los niveles: Epic 1, Historia 0, Subtask -1                                                  |
+| _Sprint_ de un issue  | `fields.<campo Sprint>[].id`     | Se resuelve en `model/board_<id>_sprints.json`. El identificador del campo se localiza en `model/fields.json` (`schema.custom` = `com.pyxis.greenhopper.jira:gh-sprint`) |
+| Nombre de un campo    | `customfield_*` o nombre clásico | `issue.names` (por issue) y `model/fields.json` (global) traducen el identificador al nombre visible                                                                     |
+| Adjunto               | `fields.attachment[].id`         | El fichero está en `attachments/<key>/<id>_<nombre>`                                                                                                                     |
 
 ## Formato de cada fichero
 
@@ -206,10 +206,10 @@ Dentro de `issue`:
 
 - `id`, `key` y `self` identifican el issue.
 - `fields` contiene todos los campos. Los más útiles son `summary`, `description`, `status`, `issuetype`, `priority`, `assignee`, `reporter`, `created`, `updated`, `labels`, `components`, `fixVersions`, `parent`, `subtasks`, `issuelinks` y `attachment`.
-- `names` traduce el identificador de cada campo a su nombre visible, por ejemplo `customfield_10010` a Sprint.
+- `names` traduce el identificador de cada campo a su nombre visible, por ejemplo `customfield_10010` a Sprint. El número de un campo personalizado varía entre instancias.
 - `renderedFields` repite los campos de texto enriquecido como HTML.
 
-Campos personalizados presentes en el proyecto PROJ:
+Ejemplos de campos personalizados de una instancia real (los identificadores varían entre instancias; búscalos por nombre o por `schema` en `model/fields.json`):
 
 | Campo               | Nombre visible | Contenido                                                                                         |
 | :------------------ | :------------- | :------------------------------------------------------------------------------------------------ |
@@ -279,7 +279,7 @@ Diccionario que usa el script para decidir qué descargar. No hace falta leerlo 
 | `fields.json`                   | lista, ordenada por `id`    | Todos los campos de la instancia, también los de otros proyectos, con `id`, `name`, `custom` y `schema`                   |
 | `link_types.json`               | objeto con `issueLinkTypes` | Tipos de enlace de toda la instancia: `id`, `name`, `inward`, `outward`                                                   |
 | `priorities.json`               | lista                       | Prioridades de la instancia                                                                                               |
-| `components.json`               | lista                       | Componentes del proyecto (vacía en PROJ)                                                                                   |
+| `components.json`               | lista                       | Componentes del proyecto (puede estar vacía)                                                                              |
 | `versions.json`                 | lista                       | Versiones del proyecto                                                                                                    |
 | `boards.json`                   | lista                       | Tableros del proyecto                                                                                                     |
 | `board_<id>_configuration.json` | objeto                      | Columnas del tablero (`columnConfig.columns`, cada una con los estados que agrupa), `estimation`, `ranking` y `filter`    |
@@ -335,15 +335,23 @@ for link in graph["links"]:
 epic_key = "PROJ-1"
 children = [h["child"] for h in graph["hierarchy"] if h["parent"] == epic_key]
 
-# Issues por _sprint_ (el campo Sprint es customfield_10010)
+# Identificador del campo Sprint (varía entre instancias): se localiza por su schema
+fields = load(root / "model" / "fields.json")
+sprint_field = next(
+    f["id"]
+    for f in fields
+    if f.get("schema", {}).get("custom") == "com.pyxis.greenhopper.jira:gh-sprint"
+)
+
+# Issues por _sprint_
 by_sprint = {}
 for key, bundle in bundles.items():
-    for sprint in bundle["issue"]["fields"].get("customfield_10010") or []:
+    for sprint in bundle["issue"]["fields"].get(sprint_field) or []:
         by_sprint.setdefault(sprint["name"], []).append(key)
 
-# Nombre visible de un campo personalizado
-names = {f["id"]: f["name"] for f in load(root / "model" / "fields.json")}
-print(names["customfield_10010"])  # Sprint
+# Nombre visible de cualquier campo
+names = {f["id"]: f["name"] for f in fields}
+print(names[sprint_field])  # Sprint
 
 
 # Texto plano de un documento ADF (descripción o comentario)
@@ -380,4 +388,4 @@ uv run --with httpx python -m unittest discover -s tests -v
 
 - Solo es una herramienta de volcado: no restaura datos en Jira.
 - Los comentarios, worklogs y changelog se descargan completos cada vez que cambia el issue.
-- La descarga se ha verificado contra el Jira real del proyecto PROJ (187 issues). Los adjuntos, los worklogs y los enlaces remotos solo se han probado con el Jira simulado, porque el proyecto no tiene ninguno.
+- La descarga se ha verificado contra un proyecto real de Jira Cloud gestionado por el equipo (_team-managed_) con 187 issues. Los adjuntos, los worklogs y los enlaces remotos solo se han probado con el Jira simulado, porque ese proyecto no tiene ninguno.
