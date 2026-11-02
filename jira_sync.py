@@ -310,6 +310,8 @@ async def sync_model(client: JiraClient, project: str, output: Path) -> None:
     names = ["statuses", "components", "versions", "fields", "link_types", "priorities", "boards"]
     changed = [write_if_changed(model / "project.json", project_data)]
     for name, data in zip(names, results):
+        if name == "fields":  # Jira returns this list in an unstable order
+            data = sorted(data, key=lambda field: field["id"])
         changed.append(write_if_changed(model / f"{name}.json", data))
 
     for board in results[-1]:
