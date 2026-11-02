@@ -1,111 +1,122 @@
 # Jira Project Sync
 
-Herramienta de volcado incremental de un proyecto de Jira Cloud. Conserva el modelo de Jira, las relaciones entre issues y sus tipos, y solo descarga lo que es nuevo o ha cambiado desde la última ejecución.
+**English** | [Español](README-es.md)
 
-El resultado es un conjunto de ficheros JSON en disco, sin base de datos. Este documento describe cómo se genera, qué contiene cada fichero y cómo se relacionan, para que una persona o un agente de código pueda consultarlos sin necesidad de leer el script.
+Incremental dump tool for a Jira Cloud project. It keeps the Jira model, the relationships between issues and their types, and only downloads what is new or has changed since the last run.
 
-## Requisitos
+The result is a set of JSON files on disk, with no database. This document describes how the data is produced, what each file contains and how the files relate to each other, so that a person or a coding agent can query them without reading the script.
 
-- [uv](https://docs.astral.sh/uv/). El script declara sus dependencias (httpx) en la cabecera y `uv` las instala solo.
-- Un API token de Atlassian: se genera en [la página de tokens de Atlassian](https://id.atlassian.com/manage-api-tokens).
+## Requirements
 
-## Configuración
+- [uv](https://docs.astral.sh/uv/). The script declares its dependencies (httpx) in its header and `uv` installs them automatically.
+- An Atlassian API token, which you can generate on [the Atlassian API tokens page](https://id.atlassian.com/manage-api-tokens).
 
-Copia `.env.example` a `.env` y rellena los valores. Las variables de entorno tienen prioridad sobre `.env`.
+## Configuration
 
-| Variable         | Obligatoria | Por defecto | Descripción                             |
-| :--------------- | :---------: | :---------- | :-------------------------------------- |
-| `JIRA_URL`       |     Sí      | —           | URL de la instancia de Jira Cloud       |
-| `JIRA_EMAIL`     |     Sí      | —           | Email de la cuenta                      |
-| `JIRA_API_TOKEN` |     Sí      | —           | API token                               |
-| `JIRA_PROJECT`   |     Sí      | —           | Clave del proyecto (por ejemplo `PROJ`) |
-| `OUTPUT_DIR`     |     No      | `./backup`  | Carpeta de destino                      |
-| `CONCURRENCY`    |     No      | `5`         | Número de peticiones en paralelo        |
+Copy `.env.example` to `.env` and fill in the values. Environment variables take precedence over `.env`.
 
-## Uso
+| Variable         | Required | Default    | Description                      |
+| :--------------- | :------: | :--------- | :------------------------------- |
+| `JIRA_URL`       |   Yes    | —          | URL of the Jira Cloud instance   |
+| `JIRA_EMAIL`     |   Yes    | —          | Account email                    |
+| `JIRA_API_TOKEN` |   Yes    | —          | API token                        |
+| `JIRA_PROJECT`   |   Yes    | —          | Project key (for example `PROJ`) |
+| `OUTPUT_DIR`     |    No    | `./backup` | Destination folder               |
+| `CONCURRENCY`    |    No    | `5`        | Number of parallel requests      |
+
+## Usage
 
 ```bash
-uv run jira_sync.py            # sincronización incremental
-uv run jira_sync.py --full     # ignora el estado local y vuelve a descargar todo
-uv run jira_sync.py --env ruta/al/.env
+uv run jira_sync.py            # incremental sync
+uv run jira_sync.py --full     # ignore the local state and download everything again
+uv run jira_sync.py --env path/to/.env
 ```
 
-Al terminar muestra un resumen: issues nuevos, actualizados, sin cambios, borrados en Jira y adjuntos descargados.
+The script has a `uv` shebang (`#!/usr/bin/env -S uv run --script`) and is stored as executable, so on Linux, macOS, WSL and Git Bash you can run it directly without typing `uv run`:
 
-## Arquitectura
+```bash
+./jira_sync.py                 # same as: uv run jira_sync.py
+./jira_sync.py --full
+```
 
-Todo el código está en un único script, `jira_sync.py`, con estas piezas:
+`uv` is still required, because the shebang calls it. Windows PowerShell and `cmd` ignore shebangs, so use `uv run jira_sync.py` there. If the executable bit is lost (for example after downloading a ZIP), run `chmod +x jira_sync.py`. By default `.env` is read from the current directory; when running from elsewhere, for example from `cron`, pass `--env /absolute/path/.env`.
 
-| Pieza                              | Responsabilidad                                                                                                             |
-| :--------------------------------- | :-------------------------------------------------------------------------------------------------------------------------- |
-| `load_config`                      | Lee `.env` (parser propio, sin dependencias) y las variables de entorno                                                     |
-| `JiraClient`                       | Cliente httpx asíncrono con autenticación básica (email y token), paginación, descarga de ficheros y reintentos             |
-| `sync_model`                       | Descarga el modelo de Jira (`model/`)                                                                                       |
-| `sync_issues`                      | Sincronización incremental de issues, adjuntos, `state.json` y `links.json`                                                 |
-| `fingerprint` y `build_link_graph` | Huella de cambios por issue y construcción del grafo de relaciones                                                          |
-| `write_if_changed`                 | Escritura atómica (fichero temporal y `os.replace`) que solo toca el disco si el contenido cambia, con JSON ordenado y fijo |
+When it finishes it prints a summary: new issues, updated issues, unchanged issues, issues deleted in Jira and attachments downloaded.
 
-Comportamiento de red:
+## Architecture
 
-- Autenticación básica con `JIRA_EMAIL` y `JIRA_API_TOKEN`.
-- Un semáforo limita las peticiones simultáneas a `CONCURRENCY`.
-- Se reintenta hasta 5 veces ante los códigos 429, 500, 502, 503 y 504 y ante errores de transporte. La espera es el valor de `Retry-After` o 2 elevado al número de intento, en segundos.
-- Las listas largas se paginan de 100 en 100.
-- Los adjuntos se descargan en streaming a un fichero `.part` que se renombra al terminar.
+All the code lives in a single script, `jira_sync.py`, made of these pieces:
+
+| Piece                                | Responsibility                                                                                                        |
+| :----------------------------------- | :-------------------------------------------------------------------------------------------------------------------- |
+| `load_config`                        | Reads `.env` (own parser, no dependencies) and the environment variables                                              |
+| `JiraClient`                         | Asynchronous httpx client with basic authentication (email and token), pagination, file download and retries          |
+| `sync_model`                         | Downloads the Jira model (`model/`)                                                                                   |
+| `sync_issues`                        | Incremental sync of issues, attachments, `state.json` and `links.json`                                                |
+| `fingerprint` and `build_link_graph` | Per-issue change fingerprint and construction of the relationship graph                                               |
+| `write_if_changed`                   | Atomic write (temporary file plus `os.replace`) that only touches the disk when the content changes, with sorted JSON |
+
+Network behavior:
+
+- Basic authentication with `JIRA_EMAIL` and `JIRA_API_TOKEN`.
+- A semaphore limits simultaneous requests to `CONCURRENCY`.
+- Requests are retried up to 5 times on status codes 429, 500, 502, 503 and 504 and on transport errors. The wait is the `Retry-After` value, or 2 raised to the attempt number, in seconds.
+- Long lists are paginated 100 items at a time.
+- Attachments are streamed to a `.part` file that is renamed when the download finishes.
 
 ```mermaid
 flowchart TD
-    start([uv run jira_sync.py]) --> model[sync_model: refresca model/]
-    model --> listing[Listado ligero JQL: id, updated, issuelinks, attachment, parent]
-    listing --> compare{¿Huella igual a la de state.json?}
-    compare -- Sí --> skip[Sin cambios: no se descarga nada]
-    compare -- "No / issue nuevo" --> bundle[Descarga issue, changelog, comments, worklogs, remote_links]
-    bundle --> save[Escribe issues/KEY.json de forma atómica]
-    save --> att[Descarga adjuntos que faltan]
-    att --> persist[Actualiza state.json]
-    listing --> gone{¿Hay ids en state.json que ya no están en Jira?}
-    gone -- Sí --> mark[Marca deleted: true y conserva el fichero]
-    listing --> linksfile[Regenera links.json desde el listado]
-    persist --> summary([Resumen por consola])
+    start([uv run jira_sync.py]) --> model[sync_model: refresh model/]
+    model --> listing[Lightweight JQL listing: id, updated, issuelinks, attachment, parent]
+    listing --> compare{Fingerprint equal to the one in state.json?}
+    compare -- Yes --> skip[Unchanged: nothing is downloaded]
+    compare -- "No / new issue" --> bundle[Download issue, changelog, comments, worklogs, remote_links]
+    bundle --> save[Atomically write issues/KEY.json]
+    save --> att[Download missing attachments]
+    att --> persist[Update state.json]
+    listing --> gone{Are there ids in state.json that are no longer in Jira?}
+    gone -- Yes --> mark[Set deleted: true and keep the file]
+    listing --> linksfile[Regenerate links.json from the listing]
+    persist --> summary([Console summary])
     skip --> summary
     mark --> summary
     linksfile --> summary
 ```
 
-### Endpoints de Jira utilizados
+### Jira endpoints used
 
-| Destino                          | _Endpoint_                                                                                            |
-| :------------------------------- | :---------------------------------------------------------------------------------------------------- |
-| Listado de issues                | `GET /rest/api/3/search/jql` (JQL `project = <KEY> ORDER BY key ASC`, paginación con `nextPageToken`) |
-| Issue                            | `GET /rest/api/3/issue/{id}?fields=*all&expand=renderedFields,names`                                  |
-| `changelog`                      | `GET /rest/api/3/issue/{id}/changelog`                                                                |
-| `comments`                       | `GET /rest/api/3/issue/{id}/comment`                                                                  |
-| `worklogs`                       | `GET /rest/api/3/issue/{id}/worklog`                                                                  |
-| `remote_links`                   | `GET /rest/api/3/issue/{id}/remotelink`                                                               |
-| `model/project.json`             | `GET /rest/api/3/project/{key}?expand=description,lead,issueTypes`                                    |
-| `model/statuses.json`            | `GET /rest/api/3/project/{key}/statuses`                                                              |
-| `model/components.json`          | `GET /rest/api/3/project/{key}/components`                                                            |
-| `model/versions.json`            | `GET /rest/api/3/project/{key}/versions`                                                              |
-| `model/fields.json`              | `GET /rest/api/3/field`                                                                               |
-| `model/link_types.json`          | `GET /rest/api/3/issueLinkType`                                                                       |
-| `model/priorities.json`          | `GET /rest/api/3/priority`                                                                            |
-| `model/boards.json`              | `GET /rest/agile/1.0/board?projectKeyOrId=<KEY>`                                                      |
-| `model/board_<id>_configuration` | `GET /rest/agile/1.0/board/{id}/configuration`                                                        |
-| `model/board_<id>_sprints`       | `GET /rest/agile/1.0/board/{id}/sprint` (un tablero sin _sprints_ responde 400 y se guarda `[]`)      |
+| Target                           | Endpoint                                                                                               |
+| :------------------------------- | :----------------------------------------------------------------------------------------------------- |
+| Issue listing                    | `GET /rest/api/3/search/jql` (JQL `project = <KEY> ORDER BY key ASC`, pagination with `nextPageToken`) |
+| Issue                            | `GET /rest/api/3/issue/{id}?fields=*all&expand=renderedFields,names`                                   |
+| `changelog`                      | `GET /rest/api/3/issue/{id}/changelog`                                                                 |
+| `comments`                       | `GET /rest/api/3/issue/{id}/comment`                                                                   |
+| `worklogs`                       | `GET /rest/api/3/issue/{id}/worklog`                                                                   |
+| `remote_links`                   | `GET /rest/api/3/issue/{id}/remotelink`                                                                |
+| `model/project.json`             | `GET /rest/api/3/project/{key}?expand=description,lead,issueTypes`                                     |
+| `model/statuses.json`            | `GET /rest/api/3/project/{key}/statuses`                                                               |
+| `model/components.json`          | `GET /rest/api/3/project/{key}/components`                                                             |
+| `model/versions.json`            | `GET /rest/api/3/project/{key}/versions`                                                               |
+| `model/fields.json`              | `GET /rest/api/3/field`                                                                                |
+| `model/link_types.json`          | `GET /rest/api/3/issueLinkType`                                                                        |
+| `model/priorities.json`          | `GET /rest/api/3/priority`                                                                             |
+| `model/boards.json`              | `GET /rest/agile/1.0/board?projectKeyOrId=<KEY>`                                                       |
+| `model/board_<id>_configuration` | `GET /rest/agile/1.0/board/{id}/configuration`                                                         |
+| `model/board_<id>_sprints`       | `GET /rest/agile/1.0/board/{id}/sprint` (a board without sprints answers 400 and `[]` is stored)       |
 
-## Qué se guarda
+## What is stored
 
-Todo queda en `backup/<PROYECTO>/`:
+Everything ends up in `backup/<PROJECT>/`:
 
 ```text
 backup/PROJ/
-├── state.json                         # control de la sincronización
-├── links.json                         # grafo de relaciones entre issues
+├── state.json                         # sync control
+├── links.json                         # relationship graph between issues
 ├── issues/
-│   └── PROJ-12.json                    # un fichero por issue
+│   └── PROJ-12.json                   # one file per issue
 ├── attachments/
 │   └── PROJ-12/
-│       └── 10042_diagrama.png         # <id del adjunto>_<nombre original>
+│       └── 10042_diagram.png          # <attachment id>_<original name>
 └── model/
     ├── project.json
     ├── statuses.json
@@ -115,120 +126,120 @@ backup/PROJ/
     ├── components.json
     ├── versions.json
     ├── boards.json
-    ├── board_3596_configuration.json
-    └── board_3596_sprints.json
+    ├── board_1_configuration.json
+    └── board_1_sprints.json
 ```
 
-| Ruta                                  | Contenido                                                                                            |
-| :------------------------------------ | :--------------------------------------------------------------------------------------------------- |
-| `issues/PROJ-n.json`                  | Issue con todos sus campos, changelog completo, comentarios, worklogs y enlaces remotos              |
-| `links.json`                          | Enlaces entre issues con su tipo (`Blocks`, `Relates`...) y jerarquía padre/hijo (epics y subtareas) |
-| `model/project.json`                  | Definición del proyecto, con sus tipos de issue                                                      |
-| `model/statuses.json`                 | Estados por tipo de issue                                                                            |
-| `model/fields.json`                   | Campos, incluidos los personalizados                                                                 |
-| `model/link_types.json`               | Tipos de enlace disponibles                                                                          |
-| `model/priorities.json`               | Prioridades                                                                                          |
-| `model/components.json`               | Componentes del proyecto                                                                             |
-| `model/versions.json`                 | Versiones del proyecto                                                                               |
-| `model/boards.json`                   | Boards del proyecto                                                                                  |
-| `model/board_<id>_configuration.json` | Configuración de cada board                                                                          |
-| `model/board_<id>_sprints.json`       | Sprints de cada board                                                                                |
-| `attachments/<issue>/<id>_<nombre>`   | Adjuntos                                                                                             |
-| `state.json`                          | Estado de sincronización (no editar a mano)                                                          |
+| Path                                  | Content                                                                                  |
+| :------------------------------------ | :--------------------------------------------------------------------------------------- |
+| `issues/PROJ-n.json`                  | Issue with all its fields, full changelog, comments, worklogs and remote links           |
+| `links.json`                          | Links between issues with their type (`Blocks`, `Relates`...) and parent/child hierarchy |
+| `model/project.json`                  | Project definition, including its issue types                                            |
+| `model/statuses.json`                 | Statuses per issue type                                                                  |
+| `model/fields.json`                   | Fields, including custom fields                                                          |
+| `model/link_types.json`               | Available link types                                                                     |
+| `model/priorities.json`               | Priorities                                                                               |
+| `model/components.json`               | Project components                                                                       |
+| `model/versions.json`                 | Project versions                                                                         |
+| `model/boards.json`                   | Project boards                                                                           |
+| `model/board_<id>_configuration.json` | Configuration of each board                                                              |
+| `model/board_<id>_sprints.json`       | Sprints of each board                                                                    |
+| `attachments/<issue>/<id>_<name>`     | Attachments                                                                              |
+| `state.json`                          | Sync state (do not edit by hand)                                                         |
 
-Los ficheros JSON se escriben con claves ordenadas y sangría fija, de modo que son comparables con `diff` o con git. El contenido es el que devuelve la API de Jira sin transformar, salvo `state.json`, `links.json` y la envoltura de cada issue, que genera el script.
+JSON files are written with sorted keys and fixed indentation, so they can be compared with `diff` or git. The content is what the Jira API returns without transformation, except `state.json`, `links.json` and the wrapper of each issue, which the script generates.
 
-## Cómo se relacionan los datos
+## How the data relates
 
 ```mermaid
 erDiagram
-    STATE ||--|| ISSUE_FILE : "id de issue a fichero por key"
+    STATE ||--|| ISSUE_FILE : "issue id to file by key"
     ISSUE_FILE ||--o{ ATTACHMENT : "fields.attachment[].id"
     ISSUE_FILE }o--o| ISSUE_FILE : "fields.parent.key"
-    LINKS_JSON ||--o{ LINK : contiene
+    LINKS_JSON ||--o{ LINK : contains
     LINK }o--|| ISSUE_FILE : "inward_issue (key)"
     LINK }o--|| ISSUE_FILE : "outward_issue (key)"
     LINK }o--|| LINK_TYPES : "type.id"
     ISSUE_FILE }o--|| STATUSES : "fields.status.id"
     ISSUE_FILE }o--|| PROJECT : "fields.issuetype.id"
-    ISSUE_FILE }o--o{ SPRINTS : "fields.(campo Sprint)[].id"
-    ISSUE_FILE }o--|| FIELDS : "issue.names y claves customfield_*"
+    ISSUE_FILE }o--o{ SPRINTS : "fields.(Sprint field)[].id"
+    ISSUE_FILE }o--|| FIELDS : "issue.names and customfield_* keys"
     BOARD_CONFIG }o--o{ STATUSES : "columnConfig.columns[].statuses[].id"
     SPRINTS }o--|| BOARD_CONFIG : "originBoardId"
 ```
 
-Las entidades del diagrama son ficheros o partes de ellos:
+The entities in the diagram are files or parts of files:
 
-| Entidad        | Fichero                                                         |
-| :------------- | :-------------------------------------------------------------- |
-| `STATE`        | `state.json`                                                    |
-| `ISSUE_FILE`   | `issues/<KEY>.json`                                             |
-| `ATTACHMENT`   | `attachments/<KEY>/<id>_<nombre>`                               |
-| `LINKS_JSON`   | `links.json`                                                    |
-| `LINK`         | Elemento de `links.json` → `links`                              |
-| `LINK_TYPES`   | `model/link_types.json`                                         |
-| `STATUSES`     | `model/statuses.json`                                           |
-| `PROJECT`      | `model/project.json` (los tipos de issue están en `issueTypes`) |
-| `SPRINTS`      | `model/board_<id>_sprints.json`                                 |
-| `FIELDS`       | `model/fields.json`                                             |
-| `BOARD_CONFIG` | `model/board_<id>_configuration.json`                           |
+| Entity         | File                                                      |
+| :------------- | :-------------------------------------------------------- |
+| `STATE`        | `state.json`                                              |
+| `ISSUE_FILE`   | `issues/<KEY>.json`                                       |
+| `ATTACHMENT`   | `attachments/<KEY>/<id>_<name>`                           |
+| `LINKS_JSON`   | `links.json`                                              |
+| `LINK`         | Element of `links.json` → `links`                         |
+| `LINK_TYPES`   | `model/link_types.json`                                   |
+| `STATUSES`     | `model/statuses.json`                                     |
+| `PROJECT`      | `model/project.json` (issue types are under `issueTypes`) |
+| `SPRINTS`      | `model/board_<id>_sprints.json`                           |
+| `FIELDS`       | `model/fields.json`                                       |
+| `BOARD_CONFIG` | `model/board_<id>_configuration.json`                     |
 
-### Identificadores y claves de unión
+### Identifiers and join keys
 
-| Concepto              | Clave de unión                   | Notas                                                                                                                                                                    |
-| :-------------------- | :------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identidad de un issue | `id` (cadena numérica)           | Estable. La clave (`PROJ-12`) puede cambiar si el issue se mueve de proyecto                                                                                             |
-| Nombre de fichero     | `key` del issue                  | `issues/<key>.json`. Si la clave cambia, el script renombra el fichero                                                                                                   |
-| `state.json`          | `id` del issue                   | Cada entrada apunta a la `key` actual                                                                                                                                    |
-| Enlaces y jerarquía   | `key`                            | `links.json` referencia issues por clave, no por id                                                                                                                      |
-| Tipo de enlace        | `type.id`                        | Se resuelve en `model/link_types.json`                                                                                                                                   |
-| Estado de un issue    | `fields.status.id`               | Se resuelve en `model/statuses.json`, agrupado por tipo de issue                                                                                                         |
-| Tipo de issue         | `fields.issuetype.id`            | Se resuelve en `model/project.json` → `issueTypes`. `hierarchyLevel` ordena los niveles: Epic 1, Historia 0, Subtask -1                                                  |
-| _Sprint_ de un issue  | `fields.<campo Sprint>[].id`     | Se resuelve en `model/board_<id>_sprints.json`. El identificador del campo se localiza en `model/fields.json` (`schema.custom` = `com.pyxis.greenhopper.jira:gh-sprint`) |
-| Nombre de un campo    | `customfield_*` o nombre clásico | `issue.names` (por issue) y `model/fields.json` (global) traducen el identificador al nombre visible                                                                     |
-| Adjunto               | `fields.attachment[].id`         | El fichero está en `attachments/<key>/<id>_<nombre>`                                                                                                                     |
+| Concept              | Join key                        | Notes                                                                                                                                                |
+| :------------------- | :------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity of an issue | `id` (numeric string)           | Stable. The key (`PROJ-12`) can change if the issue is moved to another project                                                                      |
+| File name            | `key` of the issue              | `issues/<key>.json`. If the key changes, the script renames the file                                                                                 |
+| `state.json`         | `id` of the issue               | Each entry points to the current `key`                                                                                                               |
+| Links and hierarchy  | `key`                           | `links.json` references issues by key, not by id                                                                                                     |
+| Link type            | `type.id`                       | Resolved in `model/link_types.json`                                                                                                                  |
+| Status of an issue   | `fields.status.id`              | Resolved in `model/statuses.json`, grouped by issue type                                                                                             |
+| Issue type           | `fields.issuetype.id`           | Resolved in `model/project.json` → `issueTypes`. `hierarchyLevel` orders the levels: Epic 1, Story 0, Subtask -1                                     |
+| Sprint of an issue   | `fields.<Sprint field>[].id`    | Resolved in `model/board_<id>_sprints.json`. The field id is found in `model/fields.json` (`schema.custom` = `com.pyxis.greenhopper.jira:gh-sprint`) |
+| Name of a field      | `customfield_*` or classic name | `issue.names` (per issue) and `model/fields.json` (global) translate the identifier into the visible name                                            |
+| Attachment           | `fields.attachment[].id`        | The file is in `attachments/<key>/<id>_<name>`                                                                                                       |
 
-## Formato de cada fichero
+## Format of each file
 
 ### `issues/<KEY>.json`
 
-Es una envoltura generada por el script con cinco claves:
+A wrapper generated by the script with five keys:
 
-| Clave          | Tipo   | Contenido                                                                                                               |
-| :------------- | :----- | :---------------------------------------------------------------------------------------------------------------------- |
-| `issue`        | objeto | Respuesta de `GET /issue/{id}` con `fields=*all` y `expand=renderedFields,names`                                        |
-| `changelog`    | lista  | Historial de cambios completo, del más antiguo al más reciente. Cada elemento tiene `id`, `author`, `created` e `items` |
-| `comments`     | lista  | Comentarios completos (`id`, `author`, `body`, `created`, `updated`...)                                                 |
-| `worklogs`     | lista  | Registros de tiempo                                                                                                     |
-| `remote_links` | lista  | Enlaces a recursos externos (páginas de Confluence, URLs...)                                                            |
+| Key            | Type   | Content                                                                                            |
+| :------------- | :----- | :------------------------------------------------------------------------------------------------- |
+| `issue`        | object | Response of `GET /issue/{id}` with `fields=*all` and `expand=renderedFields,names`                 |
+| `changelog`    | list   | Full change history, from oldest to newest. Each element has `id`, `author`, `created` and `items` |
+| `comments`     | list   | Full comments (`id`, `author`, `body`, `created`, `updated`...)                                    |
+| `worklogs`     | list   | Time tracking entries                                                                              |
+| `remote_links` | list   | Links to external resources (Confluence pages, URLs...)                                            |
 
-Dentro de `issue`:
+Inside `issue`:
 
-- `id`, `key` y `self` identifican el issue.
-- `fields` contiene todos los campos. Los más útiles son `summary`, `description`, `status`, `issuetype`, `priority`, `assignee`, `reporter`, `created`, `updated`, `labels`, `components`, `fixVersions`, `parent`, `subtasks`, `issuelinks` y `attachment`.
-- `names` traduce el identificador de cada campo a su nombre visible, por ejemplo `customfield_10010` a Sprint. El número de un campo personalizado varía entre instancias.
-- `renderedFields` repite los campos de texto enriquecido como HTML.
+- `id`, `key` and `self` identify the issue.
+- `fields` contains all the fields. The most useful ones are `summary`, `description`, `status`, `issuetype`, `priority`, `assignee`, `reporter`, `created`, `updated`, `labels`, `components`, `fixVersions`, `parent`, `subtasks`, `issuelinks` and `attachment`.
+- `names` translates the identifier of each field into its visible name, for example `customfield_10010` into Sprint. The number of a custom field varies between instances.
+- `renderedFields` repeats the rich text fields as HTML.
 
-Ejemplos de campos personalizados de una instancia real (los identificadores varían entre instancias; búscalos por nombre o por `schema` en `model/fields.json`):
+Examples of custom fields from a real instance (identifiers vary between instances; look them up by name or by `schema` in `model/fields.json`):
 
-| Campo               | Nombre visible | Contenido                                                                                         |
-| :------------------ | :------------- | :------------------------------------------------------------------------------------------------ |
-| `customfield_10010` | Sprint         | Lista de objetos con `id`, `name`, `state`, `boardId`, `startDate`, `endDate` y `goal`            |
-| `customfield_10011` | Clasificación  | Posición del issue en el orden del backlog (valor con formato LexoRank, por ejemplo `0\|hzzzzz:`) |
-| `customfield_10000` | Desarrollo     | Información del panel de desarrollo. En este proyecto está vacío                                  |
-| `customfield_10017` | Flagged        | Marca de impedimento                                                                              |
+| Field               | Visible name | Content                                                                                                               |
+| :------------------ | :----------- | :-------------------------------------------------------------------------------------------------------------------- |
+| `customfield_10010` | Sprint       | List of objects with `id`, `name`, `state`, `boardId`, `startDate`, `endDate` and `goal`                              |
+| `customfield_10011` | Rank         | Position of the issue in the backlog order (LexoRank value, for example `0\|hzzzzz:`). Localized in non-English sites |
+| `customfield_10000` | Development  | Development panel information. Empty when no development tool is connected                                            |
+| `customfield_10017` | Flagged      | Impediment flag                                                                                                       |
 
-Trampas a tener en cuenta:
+Pitfalls to keep in mind:
 
-- **Texto enriquecido.** `description` y el `body` de cada comentario están en formato ADF (Atlassian Document Format), un árbol JSON con `type` y `content`. El HTML equivalente de la descripción está en `renderedFields.description`.
-- **Comentarios y _worklogs_.** `issue.fields.comment` solo trae contadores (`total`) y `issue.fields.worklog` solo una primera página. Los datos completos están en las claves de primer nivel `comments` y `worklogs`.
-- **Datos incrustados.** `fields.parent`, `fields.subtasks` y `fields.issuelinks[]` incluyen un resumen del issue relacionado (título, estado, prioridad, tipo) tal como estaba al descargar. Puede estar desactualizado: la fuente fiable es el fichero del otro issue.
-- **Fechas.** Tienen el formato de Jira, por ejemplo `2026-10-26T05:56:05.043+0100`.
-- **URLs.** Los campos `self`, `iconUrl`, `avatarUrls` y `content` (adjuntos) apuntan a la instancia de Jira y dejarán de funcionar cuando se dé de baja.
+- **Rich text.** `description` and the `body` of each comment use ADF (Atlassian Document Format), a JSON tree with `type` and `content`. The HTML equivalent of the description is in `renderedFields.description`.
+- **Comments and worklogs.** `issue.fields.comment` only holds counters (`total`) and `issue.fields.worklog` only a first page. The complete data is in the top-level keys `comments` and `worklogs`.
+- **Embedded data.** `fields.parent`, `fields.subtasks` and `fields.issuelinks[]` include a summary of the related issue (title, status, priority, type) as it was when downloaded. It can be outdated: the reliable source is the file of the other issue.
+- **Dates.** They use the Jira format, for example `2026-10-26T05:56:05.043+0100`.
+- **URLs.** The fields `self`, `iconUrl`, `avatarUrls` and `content` (attachments) point to the Jira instance and will stop working when it is decommissioned.
 
 ### `links.json`
 
-Grafo de relaciones entre issues, regenerado en cada ejecución a partir del listado actual de Jira. Tiene dos claves:
+Relationship graph between issues, regenerated on every run from the current Jira listing. It has two keys:
 
 ```json
 {
@@ -249,12 +260,12 @@ Grafo de relaciones entre issues, regenerado en cada ejecución a partir del lis
 }
 ```
 
-- `links`: un elemento por enlace, sin duplicados (el mismo enlace aparece en los dos issues, pero aquí se deduplica por `id`). Se lee como `<inward_issue> <type.outward> <outward_issue>`; en el ejemplo, PROJ-12 blocks PROJ-13. Leído al revés, `<outward_issue> <type.inward> <inward_issue>`: PROJ-13 is blocked by PROJ-12.
-- `hierarchy`: relaciones padre/hijo según `fields.parent`. Cubre epic → historia y historia → subtarea. Los epics no tienen padre.
+- `links`: one element per link, without duplicates (the same link appears in both issues, but here it is deduplicated by `id`). Read it as `<inward_issue> <type.outward> <outward_issue>`; in the example, PROJ-12 blocks PROJ-13. Read the other way round, `<outward_issue> <type.inward> <inward_issue>`: PROJ-13 is blocked by PROJ-12.
+- `hierarchy`: parent/child relationships according to `fields.parent`. It covers epic → story and story → subtask. Epics have no parent.
 
 ### `state.json`
 
-Diccionario que usa el script para decidir qué descargar. No hace falta leerlo para consumir los datos, y no se debe editar.
+Dictionary the script uses to decide what to download. You do not need to read it to consume the data, and it must not be edited.
 
 ```json
 {
@@ -265,52 +276,52 @@ Diccionario que usa el script para decidir qué descargar. No hace falta leerlo 
 }
 ```
 
-- La clave es el `id` del issue.
-- `key` es la clave actual y define el nombre del fichero en `issues/`.
-- `fingerprint` es la huella de la última versión descargada.
-- `deleted: true` aparece cuando el issue ya no existe en Jira. Su fichero se conserva.
+- The key is the `id` of the issue.
+- `key` is the current key and defines the file name in `issues/`.
+- `fingerprint` is the fingerprint of the last downloaded version.
+- `deleted: true` appears when the issue no longer exists in Jira. Its file is kept.
 
-### Ficheros de `model/`
+### Files in `model/`
 
-| Fichero                         | Forma                       | Contenido                                                                                                                 |
-| :------------------------------ | :-------------------------- | :------------------------------------------------------------------------------------------------------------------------ |
-| `project.json`                  | objeto                      | Proyecto: `id`, `key`, `name`, `lead`, `style`, `simplified` (true en proyectos gestionados por el equipo) e `issueTypes` |
-| `statuses.json`                 | lista                       | Un elemento por tipo de issue, con la lista de sus estados (`id`, `name`, `statusCategory`)                               |
-| `fields.json`                   | lista, ordenada por `id`    | Todos los campos de la instancia, también los de otros proyectos, con `id`, `name`, `custom` y `schema`                   |
-| `link_types.json`               | objeto con `issueLinkTypes` | Tipos de enlace de toda la instancia: `id`, `name`, `inward`, `outward`                                                   |
-| `priorities.json`               | lista                       | Prioridades de la instancia                                                                                               |
-| `components.json`               | lista                       | Componentes del proyecto (puede estar vacía)                                                                              |
-| `versions.json`                 | lista                       | Versiones del proyecto                                                                                                    |
-| `boards.json`                   | lista                       | Tableros del proyecto                                                                                                     |
-| `board_<id>_configuration.json` | objeto                      | Columnas del tablero (`columnConfig.columns`, cada una con los estados que agrupa), `estimation`, `ranking` y `filter`    |
-| `board_<id>_sprints.json`       | lista                       | _Sprints_ del tablero: `id`, `name`, `state`, `startDate`, `endDate`, `goal`, `originBoardId`                             |
+| File                            | Shape                        | Content                                                                                                        |
+| :------------------------------ | :--------------------------- | :------------------------------------------------------------------------------------------------------------- |
+| `project.json`                  | object                       | Project: `id`, `key`, `name`, `lead`, `style`, `simplified` (true in team-managed projects) and `issueTypes`   |
+| `statuses.json`                 | list                         | One element per issue type, with the list of its statuses (`id`, `name`, `statusCategory`)                     |
+| `fields.json`                   | list, sorted by `id`         | All the fields of the instance, including those of other projects, with `id`, `name`, `custom` and `schema`    |
+| `link_types.json`               | object with `issueLinkTypes` | Link types of the whole instance: `id`, `name`, `inward`, `outward`                                            |
+| `priorities.json`               | list                         | Priorities of the instance                                                                                     |
+| `components.json`               | list                         | Project components (may be empty)                                                                              |
+| `versions.json`                 | list                         | Project versions                                                                                               |
+| `boards.json`                   | list                         | Project boards                                                                                                 |
+| `board_<id>_configuration.json` | object                       | Board columns (`columnConfig.columns`, each with the statuses it groups), `estimation`, `ranking` and `filter` |
+| `board_<id>_sprints.json`       | list                         | Sprints of the board: `id`, `name`, `state`, `startDate`, `endDate`, `goal`, `originBoardId`                   |
 
-## Cómo evita trabajo innecesario
+## How it avoids unnecessary work
 
-1. Pide a Jira un listado ligero de todas las claves con `updated`, enlaces, adjuntos y padre.
-2. Calcula una huella por issue y la compara con la de `state.json`. Si coincide, no hace nada más con ese issue.
-3. Descarga el issue completo solo si es nuevo o su huella ha cambiado. Los enlaces y adjuntos entran en la huella por si Jira no actualiza `updated` en los dos extremos de un enlace.
-4. Descarga solo los adjuntos que faltan, comparando por id y tamaño.
-5. Si un issue desaparece de Jira, lo marca como borrado en `state.json` y conserva su fichero local.
-6. Si el issue cambia de clave (movido de proyecto), renombra su fichero. La identidad de un issue es su id, no su clave.
-7. Los ficheros de `model/` se reescriben solo si su contenido cambia.
+1. It asks Jira for a lightweight listing of all the keys with `updated`, links, attachments and parent.
+2. It computes a fingerprint per issue and compares it with the one in `state.json`. If it matches, nothing else is done for that issue.
+3. It downloads the full issue only if it is new or its fingerprint changed. Links and attachments are part of the fingerprint in case Jira does not update `updated` on both ends of a link.
+4. It downloads only the missing attachments, comparing by id and size.
+5. If an issue disappears from Jira, it is marked as deleted in `state.json` and its local file is kept.
+6. If an issue changes its key (moved to another project), its file is renamed. The identity of an issue is its id, not its key.
+7. The files in `model/` are rewritten only if their content changes.
 
-El estado se guarda tras cada issue, así que una ejecución interrumpida continúa donde se quedó.
+The state is saved after each issue, so an interrupted run continues where it left off.
 
-La huella es el SHA-1 de `updated`, los identificadores de enlace ordenados, los identificadores de adjunto ordenados y la clave del padre. Una edición, un comentario nuevo o un cambio de enlace, adjunto o padre producen una huella distinta.
+The fingerprint is the SHA-1 of `updated`, the sorted link ids, the sorted attachment ids and the parent key. An edit, a new comment, or a change of link, attachment or parent produces a different fingerprint.
 
-Si falla la descarga de algún issue, el resto termina y se guarda igualmente; el error se relanza al final y la siguiente ejecución solo repite los que faltan.
+If the download of some issue fails, the rest finish and are saved anyway; the error is raised at the end and the next run only repeats the missing ones.
 
-## Guía para operar con los datos
+## Guide to working with the data
 
-Convenciones:
+Conventions:
 
-- La descarga es de solo lectura respecto a Jira: el script no escribe nunca en Jira.
-- Para consultar, lee los ficheros directamente. Para actualizar, vuelve a ejecutar el script; no edites `backup/` a mano, porque `state.json` dejaría de reflejar su contenido.
-- Un issue borrado en Jira sigue en `issues/`. Para listar solo los vigentes, descarta los ids con `deleted: true` en `state.json`.
-- La copia contiene datos personales (nombres, `accountId`, comentarios) y adjuntos. `backup/` está en `.gitignore`; no la publiques.
+- The dump is read-only with respect to Jira: the script never writes to Jira.
+- To query, read the files directly. To update, run the script again; do not edit `backup/` by hand, because `state.json` would stop reflecting its content.
+- An issue deleted in Jira stays in `issues/`. To list only the current ones, discard the ids with `deleted: true` in `state.json`.
+- The copy contains personal data (names, `accountId`, comments) and attachments. `backup/` is in `.gitignore`; do not publish it.
 
-Ejemplos en Python (solo biblioteca estándar), ejecutados contra una descarga real:
+Python examples (standard library only), run against a real dump:
 
 ```python
 import json
@@ -319,23 +330,23 @@ from pathlib import Path
 root = Path("backup/PROJ")
 load = lambda path: json.loads(path.read_text(encoding="utf-8"))
 
-# Todos los issues, indexados por clave
+# All issues, indexed by key
 bundles = {p.stem: load(p) for p in sorted((root / "issues").glob("*.json"))}
 
-# Solo los issues vigentes (excluye los borrados en Jira)
+# Only current issues (excludes those deleted in Jira)
 state = load(root / "state.json")
 current = {v["key"] for v in state.values() if not v.get("deleted")}
 
-# Enlaces tipados: "<inward_issue> <type.outward> <outward_issue>"
+# Typed links: "<inward_issue> <type.outward> <outward_issue>"
 graph = load(root / "links.json")
 for link in graph["links"]:
     print(link["inward_issue"], link["type"]["outward"], link["outward_issue"])
 
-# Hijos de un epic
+# Children of an epic
 epic_key = "PROJ-1"
 children = [h["child"] for h in graph["hierarchy"] if h["parent"] == epic_key]
 
-# Identificador del campo Sprint (varía entre instancias): se localiza por su schema
+# Id of the Sprint field (varies between instances): found by its schema
 fields = load(root / "model" / "fields.json")
 sprint_field = next(
     f["id"]
@@ -343,18 +354,18 @@ sprint_field = next(
     if f.get("schema", {}).get("custom") == "com.pyxis.greenhopper.jira:gh-sprint"
 )
 
-# Issues por _sprint_
+# Issues per sprint
 by_sprint = {}
 for key, bundle in bundles.items():
     for sprint in bundle["issue"]["fields"].get(sprint_field) or []:
         by_sprint.setdefault(sprint["name"], []).append(key)
 
-# Nombre visible de cualquier campo
+# Visible name of any field
 names = {f["id"]: f["name"] for f in fields}
 print(names[sprint_field])  # Sprint
 
 
-# Texto plano de un documento ADF (descripción o comentario)
+# Plain text of an ADF document (description or comment)
 def adf_text(node):
     if node is None:
         return ""
@@ -366,26 +377,30 @@ def adf_text(node):
 print(adf_text(bundles["PROJ-12"]["issue"]["fields"]["description"]))
 ```
 
-Al abrir los ficheros desde Python en Windows, pasa siempre `encoding="utf-8"`: el contenido está en UTF-8 y la codificación por defecto de la consola puede fallar con ciertos caracteres.
+When opening the files from Python on Windows, always pass `encoding="utf-8"`: the content is UTF-8 and the default console encoding can fail with some characters.
 
-## Qué no se descarga
+## What is not downloaded
 
-- Usuarios de la instancia y miembros de roles (solo aparecen los usuarios referenciados dentro de los issues).
-- Flujos de trabajo, reglas de automatización, paneles y filtros guardados.
-- Configuración de permisos y de seguridad de issues.
-- Contenido de las páginas de Confluence enlazadas (solo el enlace, en `remote_links`).
-- Imágenes de avatar e iconos (solo sus URL).
+- Users of the instance and role members (only the users referenced inside the issues appear).
+- Workflows, automation rules, dashboards and saved filters.
+- Permission and issue security configuration.
+- Content of linked Confluence pages (only the link, in `remote_links`).
+- Avatar images and icons (only their URLs).
 
 ## Tests
 
-Los tests usan un Jira simulado y no necesitan credenciales:
+The tests use a simulated Jira and need no credentials:
 
 ```bash
 uv run --with httpx python -m unittest discover -s tests -v
 ```
 
-## Limitaciones
+## Limitations
 
-- Solo es una herramienta de volcado: no restaura datos en Jira.
-- Los comentarios, worklogs y changelog se descargan completos cada vez que cambia el issue.
-- La descarga se ha verificado contra un proyecto real de Jira Cloud gestionado por el equipo (_team-managed_) con 187 issues. Los adjuntos, los worklogs y los enlaces remotos solo se han probado con el Jira simulado, porque ese proyecto no tiene ninguno.
+- It is only a dump tool: it does not restore data into Jira.
+- Comments, worklogs and changelog are downloaded in full every time the issue changes.
+- The download has been verified against a real team-managed Jira Cloud project with 187 issues. Attachments, worklogs and remote links have only been tested with the simulated Jira, because that project has none.
+
+## License
+
+[MIT](LICENSE)
